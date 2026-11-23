@@ -1,0 +1,28 @@
+[project]
+name = "semantic-txt-2-sql"
+version = "0.1.0"
+description = "Semantic layer (Cube) vs raw text-to-SQL agents over an Iceberg lakehouse, with secrets in OpenBao"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "anthropic>=1.11,<2",
+    "hvac>=2.4",              # Vault/OpenBao client: OpenBao kept Vault's HTTP API, so it works unchanged
+    "trino>=0.340",
+    "sqlglot>=30.21",
+    "psycopg[binary]>=3.3",
+    "httpx>=0.28",
+    "pyyaml>=6.0",
+    "mcp>=2.3,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1", "ruff>=0.16"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

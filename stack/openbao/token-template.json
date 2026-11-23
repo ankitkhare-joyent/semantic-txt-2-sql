@@ -1,0 +1,1 @@
+{"persona": {{identity.entity.name}}, "team": {{identity.entity.metadata.team}}, "groups": {{identity.entity.groups.names}}}

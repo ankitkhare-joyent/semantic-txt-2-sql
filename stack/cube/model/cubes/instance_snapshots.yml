@@ -1,0 +1,199 @@
+# The fact cube. One row of lake.ec2.instances = one EC2 instance seen in one 2-hourly
+# `describe-instances` snapshot. That grain drives every measure below:
+#
+#   * Instance COUNTS are semi-additive (like a bank balance): summing them across
+#     snapshots double-counts. They only make sense for ONE snapshot, so count measures
+#     are documented that way and the `latest_snapshot` segment exists.
+#   * Instance-HOURS are additive: each running row stands for 2 hours of runtime, so they
+#     sum safely across any time range and any grouping. Cost and vCPU-hours build on that.
+#
+# This file is the single place those rules live. A text-to-SQL agent without it has to
+# rediscover them from column names, and that is where it goes wrong (docs/01).
+cubes:
+  - name: instance_snapshots
+    sql_table: lake.ec2.instances
+    public: false            # agents and BI tools query the `fleet` view, never cubes directly
+    description: >
+      EC2 inventory: one row per instance per 2-hourly snapshot, across 4 regions and
+      8 team accounts.
+
+    joins:
+      - name: instance_prices
+        relationship: many_to_one
+        sql: "{CUBE}.instance_type = {instance_prices.instance_type}"
+
+    dimensions:
+      - name: row_key
+        sql: "{CUBE}.instance_id || '@' || CAST({CUBE}.snapshot_ts AS varchar)"
+        type: string
+        primary_key: true
+        public: false
+
+      - name: snapshot_ts
+        sql: "{CUBE}.snapshot_ts"
+        type: time
+        description: When the describe-instances snapshot was taken (UTC, every 2 hours).
+
+      - name: instance_id
+        sql: "{CUBE}.instance_id"
+        type: string
+      - name: account_id
+        sql: "{CUBE}.account_id"
+        type: string
+        description: 12-digit AWS account. Each team has its own account.
+      - name: region
+        sql: "{CUBE}.region"
+        type: string
+        description: AWS region, e.g. us-east-1, eu-central-1, ap-northeast-1, ap-southeast-1.
+      - name: availability_zone
+        sql: "{CUBE}.availability_zone"
+        type: string
+      - name: instance_type
+        sql: "{CUBE}.instance_type"
+        type: string
+        description: e.g. m7i.large, g5.2xlarge.
+      - name: instance_family
+        sql: "{CUBE}.instance_family"
+        type: string
+        description: The part before the dot, e.g. m7i, g5, p4d.
+      - name: state
+        sql: "{CUBE}.state"
+        type: string
+        description: pending | running | stopping | stopped | shutting-down | terminated.
+      - name: lifecycle
+        sql: "{CUBE}.lifecycle"
+        type: string
+        description: on-demand or spot.
+      - name: platform
+        sql: "{CUBE}.platform"
+        type: string
+        description: Linux/UNIX or Windows.
+      - name: architecture
+        sql: "{CUBE}.architecture"
+        type: string
+        description: x86_64 or arm64 (Graviton).
+      - name: team
+        sql: "{CUBE}.team"
+        type: string
+        description: Owning team, from the Team tag (platform, payments, search, data, ml, devex, finance, logistics).
+      - name: service
+        sql: "{CUBE}.service"
+        type: string
+        description: Service tag, e.g. checkout-api, spark-batch, ml-training.
+      - name: cost_center
+        sql: "{CUBE}.cost_center"
+        type: string
+        description: CostCenter tag. NULL means the instance is missing the tag (a tagging-compliance gap).
+      - name: has_cost_center_tag
+        sql: "{CUBE}.cost_center IS NOT NULL"
+        type: boolean
+      - name: vcpus
+        sql: "{CUBE}.vcpus"
+        type: number
+      - name: memory_gib
+        sql: "{CUBE}.memory_gib"
+        type: number
+      - name: gpus
+        sql: "{CUBE}.gpus"
+        type: number
+      - name: launch_time
+        sql: "{CUBE}.launch_time"
+        type: time
+
+    measures:
+      # ---- counts: valid for ONE snapshot only --------------------------------------
+      - name: running_instances
+        type: count_distinct
+        sql: "{CUBE}.instance_id"
+        filters:
+          - sql: "{CUBE}.state = 'running'"
+        description: >
+          Number of running instances. Semi-additive: only meaningful for a single
+          snapshot, so pair it with the latest_snapshot segment or a single snapshot_ts.
+          For a time range, use avg_running_instances or running_instance_hours instead.
+      - name: instances
+        type: count_distinct
+        sql: "{CUBE}.instance_id"
+        description: >
+          Distinct instances in any state. For one snapshot this is the fleet size; for a
+          time range it is how many different instances existed at some point in it.
+
+      # ---- additive: valid for any time range -----------------------------------------
+      - name: running_instance_hours
+        type: sum
+        sql: "CASE WHEN {CUBE}.state = 'running' THEN 2 ELSE 0 END"
+        description: Hours instances spent running. Each snapshot represents 2 hours.
+      - name: running_vcpu_hours
+        type: sum
+        sql: "CASE WHEN {CUBE}.state = 'running' THEN 2 * {CUBE}.vcpus ELSE 0 END"
+      - name: running_gpu_hours
+        type: sum
+        sql: "CASE WHEN {CUBE}.state = 'running' THEN 2 * {CUBE}.gpus ELSE 0 END"
+      - name: spot_instance_hours
+        type: sum
+        sql: "CASE WHEN {CUBE}.state = 'running' AND {CUBE}.lifecycle = 'spot' THEN 2 ELSE 0 END"
+      - name: snapshots
+        type: count_distinct
+        sql: "{CUBE}.snapshot_ts"
+        public: false
+
+      # Business rule, defined once: list price per hour, spot billed at 35% of on-demand.
+      # Prices are approximate us-east-1 Linux on-demand list prices, for teaching only.
+      - name: estimated_cost_usd
+        type: sum
+        sql: >
+          CASE WHEN {CUBE}.state = 'running'
+               THEN 2 * {instance_prices.on_demand_usd_per_hour}
+                      * CASE WHEN {CUBE}.lifecycle = 'spot' THEN 0.35 ELSE 1.0 END
+               ELSE 0 END
+        format: currency
+        description: >
+          Estimated compute cost in USD: running hours x on-demand list price, spot at
+          35% of on-demand. Excludes EBS, data transfer and Windows licensing.
+
+      # ---- ratios of additive measures: safe for any grouping and range ---------------
+      - name: spot_share
+        type: number
+        sql: "1.0 * {spot_instance_hours} / NULLIF({running_instance_hours}, 0)"
+        format: percent
+        description: Share of running instance-hours that ran on spot.
+      - name: avg_running_instances
+        type: number
+        sql: "1.0 * {running_instance_hours} / NULLIF(2 * {snapshots}, 0)"
+        description: >
+          Average number of instances running at once over the selected period
+          (running instance-hours divided by hours covered by the snapshots in the result).
+
+    segments:
+      - name: latest_snapshot
+        sql: "{CUBE}.snapshot_ts = (SELECT max(snapshot_ts) FROM lake.ec2.instances)"
+        description: Only the most recent snapshot, i.e. "right now".
+
+    pre_aggregations:
+      # Daily rollup of the additive measures, stored in Cube Store. Dashboards and agents
+      # asking about trends hit this (milliseconds) instead of scanning Iceberg via Trino.
+      # Count-distinct measures can't be re-aggregated from a rollup, so those queries
+      # still go to Trino - Cube decides per query.
+      - name: daily_usage
+        measures:
+          - running_instance_hours
+          - running_vcpu_hours
+          - running_gpu_hours
+          - spot_instance_hours
+          - estimated_cost_usd
+        dimensions:
+          - region
+          - team
+          - service
+          - lifecycle
+          - instance_type
+          - instance_family
+        time_dimension: snapshot_ts
+        granularity: day
+        partition_granularity: month
+        # Rebuild when the data changes, not on a timer: Cube runs this cheap query every
+        # 10 minutes and rebuilds the partitions whose result changed. (A pure `every: 2 hour`
+        # would serve stale numbers for up to 2 hours after each load.)
+        refresh_key:
+          every: 10 minute
+          sql: SELECT max(snapshot_ts) FROM lake.ec2.instances

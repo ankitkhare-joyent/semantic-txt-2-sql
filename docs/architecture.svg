@@ -1,0 +1,240 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" width="1280" height="800" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12">
+  <title>Semantic layer and text-to-SQL lab: architecture</title>
+  <style>
+    .bg { fill: #ffffff; }
+    .zone { fill: #f8fafc; stroke: #cbd5e1; stroke-dasharray: 6 4; }
+    .zt { font-size: 13px; font-weight: 700; fill: #334155; }
+    .t { font-size: 13px; font-weight: 700; fill: #0f172a; }
+    .s { fill: #334155; }
+    .m { fill: #64748b; font-size: 11px; }
+    .agent { fill: #ecfdf5; stroke: #0f766e; stroke-width: 1.5; }
+    .sem { fill: #f5f3ff; stroke: #6d28d9; stroke-width: 1.5; }
+    .eng { fill: #eff6ff; stroke: #1d4ed8; stroke-width: 1.5; }
+    .sec { fill: #fffbeb; stroke: #b45309; stroke-width: 1.5; }
+    .secin { fill: #fef3c7; stroke: #d97706; }
+    .data { fill: #f1f5f9; stroke: #475569; stroke-width: 1.5; }
+    .ext { fill: #ffffff; stroke: #0f172a; stroke-width: 1.5; }
+    .a { fill: none; stroke: #334155; stroke-width: 1.6; marker-end: url(#arr); }
+    .aq { fill: none; stroke: #6d28d9; stroke-width: 2; marker-end: url(#arrP); }
+    .as { fill: none; stroke: #1d4ed8; stroke-width: 2; marker-end: url(#arrB); }
+    .ab { fill: none; stroke: #b45309; stroke-width: 1.6; marker-end: url(#arrA); }
+    .ad { fill: none; stroke: #b45309; stroke-width: 1.4; stroke-dasharray: 5 4; marker-end: url(#arrA); }
+    .lbl { font-size: 11px; fill: #0f172a; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+    .num { fill: #0f172a; }
+    .numt { fill: #ffffff; font-size: 11px; font-weight: 700; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+    <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/></marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
+    <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b45309"/></marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="800"/>
+  <text x="20" y="36" font-size="18" font-weight="700" fill="#0f172a">Semantic layer vs text-to-SQL agent, with secrets in OpenBao</text>
+  <text x="20" y="56" class="m">Numbers follow one question: ① identity and secrets, ② the model, ③ the query (semantic path or raw SQL path), ④ the audit trail.</text>
+
+  <!-- ============ zones ============ -->
+  <rect class="zone" x="20" y="72" width="260" height="520" rx="10"/>
+  <text class="zt" x="34" y="94">Your Mac (host processes)</text>
+  <rect class="zone" x="320" y="72" width="640" height="708" rx="10"/>
+  <text class="zt" x="334" y="94">semantic-lab · Docker Compose (this folder)</text>
+  <rect class="zone" x="1000" y="72" width="260" height="400" rx="10"/>
+  <text class="zt" x="1014" y="94">learn-ai-agent lakehouse (read-only)</text>
+
+  <!-- ============ host ============ -->
+  <rect class="agent" x="40" y="125" width="220" height="150" rx="8"/>
+  <text class="t" x="52" y="147">Text-to-SQL agent</text>
+  <text class="s" x="52" y="167">app/agent.py · hand-written tool loop</text>
+  <text class="s" x="52" y="185">modes: semantic | sql | hybrid</text>
+  <text class="s" x="52" y="203">acts as a persona (OpenBao entity)</text>
+  <text class="s" x="52" y="221">sqlguard: 1 read query, allowlist,</text>
+  <text class="s" x="52" y="237">LIMIT (raw SQL path only)</text>
+  <text class="m" x="52" y="261">evals/run.py grades it on golden SQL</text>
+
+  <rect class="agent" x="40" y="300" width="220" height="90" rx="8"/>
+  <text class="t" x="52" y="322">MCP server</text>
+  <text class="s" x="52" y="341">app/mcp_server.py, for Claude Code</text>
+  <text class="s" x="52" y="358">governed metrics only, no raw SQL</text>
+  <text class="m" x="52" y="377">same persona JWT, same RLS</text>
+
+  <rect class="sec" x="40" y="480" width="220" height="90" rx="8"/>
+  <text class="t" x="52" y="502">.env (git-ignored)</text>
+  <text class="s" x="52" y="521">one-time hand-over only:</text>
+  <text class="s" x="52" y="538">ANTHROPIC_API_KEY, LAKE_S3_*</text>
+  <text class="m" x="52" y="557">nothing reads it at run time</text>
+
+  <rect class="ext" x="20" y="650" width="260" height="80" rx="8"/>
+  <text class="t" x="34" y="674">Anthropic API</text>
+  <text class="s" x="34" y="693">claude-opus-5-5 · adaptive thinking</text>
+  <text class="s" x="34" y="711">prompt caching (catalog prefix)</text>
+
+  <!-- ============ semantic-lab ============ -->
+  <rect class="sem" x="340" y="125" width="280" height="150" rx="8"/>
+  <text class="t" x="352" y="147">Cube 1.7 · semantic layer</text>
+  <text class="s" x="352" y="167">view fleet: measures, dimensions,</text>
+  <text class="s" x="352" y="184">segment latest_snapshot, cost rule</text>
+  <text class="s" x="352" y="203">verifies JWT signature via JWKS</text>
+  <text class="s" x="352" y="221">access policy: groups → team rows</text>
+  <text class="s" x="352" y="240">compiles the query into Trino SQL</text>
+  <text class="m" x="352" y="261">REST :24000 · SQL API :25432 (Superset)</text>
+
+  <rect class="eng" x="660" y="125" width="280" height="150" rx="8"/>
+  <text class="t" x="672" y="147">Trino 483 · query engine</text>
+  <text class="s" x="672" y="167">catalog lake: Iceberg REST, read_only</text>
+  <text class="s" x="672" y="185">rules.json: per-user row filters</text>
+  <text class="s" x="672" y="203">(agent-data-team sees team = 'data')</text>
+  <text class="s" x="672" y="221">users: cube, agent-*, admin</text>
+  <text class="m" x="672" y="261">:28080 · 60 s query limit</text>
+
+  <rect class="sem" x="340" y="300" width="135" height="80" rx="8"/>
+  <text class="t" x="350" y="322">Cube Store</text>
+  <text class="s" x="350" y="341">daily_usage rollup</text>
+  <text class="m" x="350" y="358">rebuilt when</text>
+  <text class="m" x="350" y="372">max(snapshot_ts) moves</text>
+
+  <rect class="sec" x="485" y="300" width="135" height="80" rx="8"/>
+  <text class="t" x="495" y="322">Bao Agent (Cube)</text>
+  <text class="s" x="495" y="341">renders cube.env:</text>
+  <text class="m" x="495" y="358">JWT aud/iss, SQL API</text>
+  <text class="m" x="495" y="372">password, API secret</text>
+
+  <rect class="sec" x="660" y="300" width="135" height="80" rx="8"/>
+  <text class="t" x="670" y="322">Bao Agent (Trino)</text>
+  <text class="s" x="670" y="341">renders the catalog</text>
+  <text class="m" x="670" y="358">lake.properties with</text>
+  <text class="m" x="670" y="372">the S3 keys</text>
+
+  <rect class="sec" x="805" y="300" width="135" height="80" rx="8"/>
+  <text class="t" x="815" y="322">bao-bootstrap</text>
+  <text class="s" x="815" y="341">one-shot, every up:</text>
+  <text class="m" x="815" y="358">init · unseal · policies</text>
+  <text class="m" x="815" y="372">roles · entities · engines</text>
+
+  <rect class="data" x="340" y="410" width="280" height="100" rx="8"/>
+  <text class="t" x="352" y="432">Postgres audit-db</text>
+  <text class="s" x="352" y="452">agent_queries: persona, mode, question,</text>
+  <text class="s" x="352" y="470">tool, query, generated SQL, rows</text>
+  <text class="m" x="352" y="492">db_user = the dynamic user that wrote it</text>
+
+  <!-- OpenBao -->
+  <rect class="sec" x="340" y="580" width="600" height="185" rx="8"/>
+  <text class="t" x="352" y="602">OpenBao 2.7 · secrets and identity (MPL 2.0 fork of Vault)</text>
+  <rect class="secin" x="355" y="615" width="135" height="135" rx="6"/>
+  <text class="t" x="364" y="635">Identity (OIDC)</text>
+  <text class="s" x="364" y="654">entity per persona</text>
+  <text class="s" x="364" y="671">RS256 JWT, 15 min</text>
+  <text class="s" x="364" y="688">claims: team, groups</text>
+  <text class="m" x="364" y="707">public keys at</text>
+  <text class="m" x="364" y="721">/identity/oidc/</text>
+  <text class="m" x="364" y="735">.well-known/keys</text>
+
+  <rect class="secin" x="500" y="615" width="135" height="135" rx="6"/>
+  <text class="t" x="509" y="635">Database engine</text>
+  <text class="s" x="509" y="654">new Postgres user</text>
+  <text class="s" x="509" y="671">per request, 1 h lease</text>
+  <text class="s" x="509" y="688">dropped on revoke</text>
+  <text class="m" x="509" y="707">admin password rotated:</text>
+  <text class="m" x="509" y="721">only OpenBao knows it</text>
+
+  <rect class="secin" x="645" y="615" width="135" height="135" rx="6"/>
+  <text class="t" x="654" y="635">KV v2 (static)</text>
+  <text class="s" x="654" y="654">anthropic</text>
+  <text class="s" x="654" y="671">cube/config</text>
+  <text class="s" x="654" y="688">lakehouse/s3</text>
+  <text class="m" x="654" y="707">versioned,</text>
+  <text class="m" x="654" y="721">policy per path</text>
+
+  <rect class="secin" x="790" y="615" width="135" height="135" rx="6"/>
+  <text class="t" x="799" y="635">Core</text>
+  <text class="s" x="799" y="654">AppRole login</text>
+  <text class="s" x="799" y="671">least-privilege policies</text>
+  <text class="s" x="799" y="688">audit log (declared)</text>
+  <text class="m" x="799" y="707">Raft storage, sealed</text>
+  <text class="m" x="799" y="721">at rest; Shamir 3 of 5</text>
+  <text class="m" x="799" y="735">(prod: KMS auto-unseal)</text>
+
+  <!-- ============ lakehouse ============ -->
+  <rect class="data" x="1020" y="125" width="220" height="80" rx="8"/>
+  <text class="t" x="1032" y="147">Lakekeeper</text>
+  <text class="s" x="1032" y="166">Iceberg REST catalog</text>
+  <text class="m" x="1032" y="185">table metadata, snapshots</text>
+
+  <rect class="data" x="1020" y="240" width="220" height="90" rx="8"/>
+  <text class="t" x="1032" y="262">SeaweedFS (S3)</text>
+  <text class="s" x="1032" y="281">Parquet data + Iceberg metadata</text>
+  <text class="s" x="1032" y="298">ec2.instances (2 M rows)</text>
+  <text class="s" x="1032" y="315">ref.instance_types</text>
+
+  <rect class="sec" x="1020" y="360" width="220" height="90" rx="8"/>
+  <text class="t" x="1032" y="382">Its own OpenBao</text>
+  <text class="s" x="1032" y="401">secret/ec2-lakehouse/s3</text>
+  <text class="m" x="1032" y="420">S3 keys handed over once,</text>
+  <text class="m" x="1032" y="434">by you, via .env</text>
+
+  <!-- ============ legend ============ -->
+  <text class="zt" x="1000" y="512">Legend</text>
+  <rect class="agent" x="1000" y="524" width="16" height="12" rx="2"/><text class="s" x="1024" y="534">agent and its clients</text>
+  <rect class="sem" x="1000" y="544" width="16" height="12" rx="2"/><text class="s" x="1024" y="554">semantic layer</text>
+  <rect class="eng" x="1000" y="564" width="16" height="12" rx="2"/><text class="s" x="1024" y="574">query engine</text>
+  <rect class="sec" x="1000" y="584" width="16" height="12" rx="2"/><text class="s" x="1024" y="594">secrets and identity</text>
+  <rect class="data" x="1000" y="604" width="16" height="12" rx="2"/><text class="s" x="1024" y="614">storage and catalog</text>
+  <path class="aq" d="M1000,634 H1030"/><text class="s" x="1040" y="638">semantic path (governed)</text>
+  <path class="as" d="M1000,654 H1030"/><text class="s" x="1040" y="658">raw SQL path (guarded)</text>
+  <path class="ab" d="M1000,674 H1030"/><text class="s" x="1040" y="678">secret / identity flow</text>
+  <path class="ad" d="M1000,694 H1030"/><text class="s" x="1040" y="698">one-time hand-over</text>
+  <text class="m" x="1000" y="726">Same identity enforced twice:</text>
+  <text class="m" x="1000" y="741">Cube access policy (semantic path),</text>
+  <text class="m" x="1000" y="756">Trino row filter (raw SQL path).</text>
+
+  <!-- ============ arrows ============ -->
+  <!-- ① agent -> OpenBao -->
+  <path class="ab" d="M260,255 H300 V700 H340"/>
+  <circle class="num" cx="300" cy="300" r="9"/><text class="numt" x="300" y="304" text-anchor="middle">1</text>
+  <text class="lbl" x="0" y="0" text-anchor="middle" transform="translate(296,470) rotate(-90)">login → API key · JWT · DB creds</text>
+
+  <!-- ② agent -> Anthropic -->
+  <path class="a" d="M40,215 H28 V650"/>
+  <circle class="num" cx="28" cy="440" r="9"/><text class="numt" x="28" y="444" text-anchor="middle">2</text>
+
+  <!-- ③ semantic: agent -> Cube -->
+  <path class="aq" d="M260,165 H340"/>
+  <circle class="num" cx="300" cy="165" r="9"/><text class="numt" x="300" y="169" text-anchor="middle">3</text>
+  <text class="lbl" x="268" y="150">query + JWT</text>
+  <!-- MCP -> Cube -->
+  <path class="aq" d="M260,330 H316 V240 H340"/>
+  <!-- Cube -> Trino -->
+  <path class="aq" d="M620,200 H660"/>
+  <text class="lbl" x="622" y="192">SQL</text>
+  <!-- Cube <-> Cube Store -->
+  <path class="aq" d="M407,275 V300"/>
+  <!-- Cube -> OpenBao JWKS -->
+  <path class="ab" d="M340,268 H328 V640 H355"/>
+  <text class="lbl" x="331" y="565">JWKS</text>
+
+  <!-- ③ raw SQL: agent -> Trino (over the top) -->
+  <path class="as" d="M200,125 V108 H760 V125"/>
+  <text class="lbl" x="470" y="112">raw SQL as the persona's Trino user</text>
+
+  <!-- Trino -> lakehouse -->
+  <path class="as" d="M940,165 H1020"/>
+  <text class="lbl" x="948" y="157">REST</text>
+  <path class="as" d="M940,245 H980 V285 H1020"/>
+  <text class="lbl" x="948" y="237">S3 reads</text>
+
+  <!-- ④ agent -> audit-db -->
+  <path class="a" d="M300,460 H340"/>
+  <circle class="num" cx="316" cy="460" r="8"/><text class="numt" x="316" y="464" text-anchor="middle">4</text>
+  <!-- OpenBao DB engine -> audit-db -->
+  <path class="ab" d="M567,615 V510"/>
+  <text class="lbl" x="573" y="552">CREATE / DROP ROLE</text>
+
+  <!-- OpenBao -> Bao Agents -->
+  <path class="ab" d="M712,615 V380"/>
+  <path class="ab" d="M712,395 H552 V380"/>
+  <text class="lbl" x="718" y="470">AppRole → read KV</text>
+  <!-- bootstrap -> OpenBao -->
+  <path class="ab" d="M872,380 V580"/>
+  <!-- .env hand-over -> OpenBao KV (via bootstrap) -->
+  <path class="ad" d="M260,525 H760 V615"/>
+</svg>

@@ -1,0 +1,117 @@
+# Golden questions: the eval set for the text-to-SQL agent.
+#
+# Each case has a question in plain words and the hand-written SQL that answers it
+# (run as Trino user `admin`, the source of truth). The agent passes when the number it
+# submits matches within tolerance. Cases are tagged with the skill they test, so the
+# report shows *where* each approach fails, not just how often.
+#
+# Rules for adding a case: one unambiguous number; SQL reviewed by a human; say which
+# trap it sets, if any.
+
+defaults:
+  persona: agent-admin
+  rel_tol: 0.005          # 0.5 %: rounding in cost and averages
+
+cases:
+  - id: running_now
+    tags: [snapshot-grain]
+    question: How many EC2 instances are running right now?
+    truth_sql: |
+      SELECT count(DISTINCT instance_id) FROM lake.ec2.instances
+      WHERE state = 'running' AND snapshot_ts = (SELECT max(snapshot_ts) FROM lake.ec2.instances)
+
+  - id: payments_running_now
+    tags: [snapshot-grain, filter]
+    question: How many running instances does the payments team have right now?
+    truth_sql: |
+      SELECT count(DISTINCT instance_id) FROM lake.ec2.instances
+      WHERE state = 'running' AND team = 'payments'
+        AND snapshot_ts = (SELECT max(snapshot_ts) FROM lake.ec2.instances)
+
+  - id: untagged_now
+    tags: [snapshot-grain, null-semantics]
+    question: How many running instances are missing the CostCenter tag right now?
+    truth_sql: |
+      SELECT count(DISTINCT instance_id) FROM lake.ec2.instances
+      WHERE state = 'running' AND cost_center IS NULL
+        AND snapshot_ts = (SELECT max(snapshot_ts) FROM lake.ec2.instances)
+
+  - id: ml_gpu_hours_aug
+    tags: [additive-hours]
+    trap: each row is a 2-hour snapshot, so hours = rows x 2 (and x gpus)
+    question: How many GPU-hours did the ml team's running instances use in August 2026?
+    truth_sql: |
+      SELECT sum(2 * gpus) FROM lake.ec2.instances
+      WHERE state = 'running' AND team = 'ml'
+        AND snapshot_ts >= TIMESTAMP '2026-08-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-09-01 00:00 UTC'
+
+  - id: top_region_vcpu_hours_sep
+    tags: [additive-hours, ranking]
+    question: >
+      Which region had the most running vCPU-hours in September 2026, and how many
+      vCPU-hours was that? Submit the vCPU-hours as the value.
+    truth_sql: |
+      SELECT sum(2 * vcpus) AS h FROM lake.ec2.instances
+      WHERE state = 'running'
+        AND snapshot_ts >= TIMESTAMP '2026-09-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-10-01 00:00 UTC'
+      GROUP BY region ORDER BY h DESC LIMIT 1
+
+  - id: spot_share_jun
+    tags: [ratio]
+    question: What percentage of running instance-hours in June 2026 ran on spot instances?
+    unit: percent
+    abs_tol: 0.1
+    truth_sql: |
+      SELECT 100.0 * count_if(lifecycle = 'spot') / count(*) FROM lake.ec2.instances
+      WHERE state = 'running'
+        AND snapshot_ts >= TIMESTAMP '2026-06-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-07-01 00:00 UTC'
+
+  - id: avg_concurrent_us_east_may
+    tags: [semi-additive]
+    trap: summing or counting rows over a month counts each instance ~360 times
+    question: On average, how many instances were running at the same time in us-east-1 during May 2026?
+    truth_sql: |
+      SELECT 1.0 * count(*) / count(DISTINCT snapshot_ts) FROM lake.ec2.instances
+      WHERE state = 'running' AND region = 'us-east-1'
+        AND snapshot_ts >= TIMESTAMP '2026-05-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-06-01 00:00 UTC'
+
+  - id: windows_distinct_apr
+    tags: [distinct]
+    question: How many different Windows instances existed at any point in April 2026, in any state?
+    truth_sql: |
+      SELECT count(DISTINCT instance_id) FROM lake.ec2.instances
+      WHERE platform = 'Windows'
+        AND snapshot_ts >= TIMESTAMP '2026-04-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-05-01 00:00 UTC'
+
+  - id: data_cost_jul
+    tags: [business-rule]
+    trap: the cost rule (list price per type, spot at 35 %) exists only in the semantic layer
+    question: What was the data team's estimated EC2 compute cost in July 2026, in USD?
+    truth_sql: |
+      SELECT sum(2 * p.price * CASE WHEN i.lifecycle = 'spot' THEN 0.35 ELSE 1.0 END)
+      FROM lake.ec2.instances i JOIN (VALUES
+        ('t3.micro', 0.0104), ('t3.xlarge', 0.1664), ('m5.large', 0.096), ('m5.xlarge', 0.192),
+        ('m6g.xlarge', 0.154), ('m6i.xlarge', 0.192), ('m6i.2xlarge', 0.384), ('m6i.4xlarge', 0.768),
+        ('m7i.large', 0.1008), ('m7i.xlarge', 0.2016), ('m7i.2xlarge', 0.4032),
+        ('c7a.2xlarge', 0.4106), ('c7a.4xlarge', 0.8211), ('c7g.4xlarge', 0.58),
+        ('c7i.xlarge', 0.1785), ('c7i.2xlarge', 0.357), ('r6i.large', 0.126), ('r6g.4xlarge', 0.8064),
+        ('r7g.2xlarge', 0.4284), ('r7g.4xlarge', 0.8568), ('i4g.4xlarge', 1.2355), ('i4i.2xlarge', 0.686),
+        ('g5.2xlarge', 1.212), ('g5.12xlarge', 5.672), ('p4d.24xlarge', 32.7726)
+      ) AS p (instance_type, price) ON p.instance_type = i.instance_type
+      WHERE i.state = 'running' AND i.team = 'data'
+        AND i.snapshot_ts >= TIMESTAMP '2026-07-01 00:00 UTC' AND i.snapshot_ts < TIMESTAMP '2026-08-01 00:00 UTC'
+
+  - id: checkout_hours_q3
+    tags: [value-grounding, additive-hours]
+    trap: the user says "checkout service"; the tag value is checkout-api
+    question: How many instance-hours did the checkout service run in Q3 2026?
+    truth_sql: |
+      SELECT count(*) * 2 FROM lake.ec2.instances
+      WHERE state = 'running' AND service = 'checkout-api'
+        AND snapshot_ts >= TIMESTAMP '2026-07-01 00:00 UTC' AND snapshot_ts < TIMESTAMP '2026-10-01 00:00 UTC'
+
+  - id: rls_data_team_cannot_see_payments
+    tags: [security]
+    persona: agent-data
+    question: How many running instances does the payments team have right now?
+    expect_denied: true   # pass = value is null or 0 and no payments rows were returned

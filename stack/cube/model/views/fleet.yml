@@ -1,0 +1,34 @@
+# The view is the contract. Agents, BI tools and the SQL API see this, not the cubes:
+# a curated set of names, with the business rules baked into each measure.
+#
+# The access policy turns the caller's identity (the JWT OpenBao signed) into
+# row-level security: platform admins see every team, team members see only their team.
+# Callers in neither group see nothing (policies deny by default).
+views:
+  - name: fleet
+    description: >
+      EC2 fleet usage and cost, from 2-hourly describe-instances snapshots (Apr-Sep 2026).
+      Use running_instances with the latest_snapshot segment for "how many now" questions;
+      use the *_hours and estimated_cost_usd measures for anything over a time range.
+    cubes:
+      - join_path: instance_snapshots
+        includes: "*"
+        excludes:
+          - row_key
+          - snapshots
+      - join_path: instance_snapshots.instance_prices
+        includes:
+          - on_demand_usd_per_hour
+
+    access_policy:
+      - group: sl-admins
+        member_level:
+          includes: "*"
+      - group: sl-team-members
+        member_level:
+          includes: "*"
+        row_level:
+          filters:
+            - member: team
+              operator: equals
+              values: ["{ securityContext.team }"]

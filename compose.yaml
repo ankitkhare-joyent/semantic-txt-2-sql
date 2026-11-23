@@ -1,0 +1,182 @@
+# Semantic layer + text-to-SQL lab, on top of the learn-ai-agent lakehouse.
+#
+#   OpenBao ──(AppRole)──> Bao Agents ──render secrets──> Trino, Cube
+#      │  └─(OIDC JWKS)──────────────────────────────────> Cube verifies agent JWTs
+#      └──(dynamic creds)──> audit-db (Postgres)
+#   agent (host) ──JWT──> Cube ──SQL──> Trino ──Iceberg REST──> Lakekeeper + SeaweedFS (sibling)
+#
+# Start the sibling first (learn-ai-agent: `docker compose up -d` and seed), then:
+#   docker compose up -d
+# Memory: ~3.5 GB of limits in total (Trino 1.6 GB is most of it).
+name: semantic-lab
+
+x-bao-agent: &bao-agent
+  image: openbao/openbao:2.7.1
+  entrypoint: ["bao"]              # skip the image entrypoint, which drops to its own user
+  command: ["agent", "-config=/etc/bao/agent.hcl"]
+  depends_on:
+    bao-bootstrap: { condition: service_completed_successfully }
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "test -s /rendered/$${RENDERED_FILE}"]
+    interval: 2s
+    retries: 30
+  mem_limit: 64m
+
+services:
+  # ------------------------------------------------------------------ secrets
+  openbao:
+    image: openbao/openbao:2.7.1
+    command: ["server"]              # the entrypoint adds -config=/openbao/config
+    cap_add: [IPC_LOCK]
+    ports: ["28200:8200"]            # API + UI: http://localhost:28200/ui
+    volumes:
+      - ./stack/openbao/server.hcl:/openbao/config/server.hcl:ro
+      - bao-data:/openbao/file
+      - bao-logs:/openbao/logs
+    healthcheck:
+      # 200 = unsealed, 503 = sealed, 501 = not initialised: all mean "process is up".
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200' || exit 1"]
+      interval: 2s
+      retries: 30
+    mem_limit: 256m
+
+  # One-shot: init + unseal + configure. Re-runs on every `up` (idempotent) because
+  # OpenBao starts sealed after every restart.
+  bao-bootstrap:
+    image: openbao/openbao:2.7.1
+    entrypoint: ["sh", "/bootstrap/bootstrap.sh"]
+    user: "0"
+    env_file:
+      - path: .env                   # ANTHROPIC_API_KEY, LAKE_S3_ACCESS_KEY, LAKE_S3_SECRET_KEY (git-ignored)
+        required: false
+    environment:
+      BAO_ADDR: http://openbao:8200
+      AUDIT_DB_BOOTSTRAP_PASSWORD: bootstrap-only-rotated-by-openbao
+    volumes:
+      - ./stack/openbao/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+      - ./stack/openbao/policies:/bootstrap/policies:ro
+      - ./stack/openbao/token-template.json:/bootstrap/token-template.json:ro
+      - ./.secrets:/secrets
+    depends_on:
+      openbao: { condition: service_healthy }
+      audit-db: { condition: service_healthy }
+
+  bao-agent-trino:
+    <<: *bao-agent
+    user: "0:1000"                   # rendered files get group 1000 = the trino user
+    environment: { RENDERED_FILE: lake.properties }
+    volumes:
+      - ./stack/openbao/agent-trino:/etc/bao:ro
+      - ./stack/openbao/agent-trino:/templates:ro
+      - ./.secrets/approle/trino:/approle:ro
+      - trino-catalog:/rendered
+
+  bao-agent-cube:
+    <<: *bao-agent
+    user: "0"
+    environment: { RENDERED_FILE: cube.env }
+    volumes:
+      - ./stack/openbao/agent-cube:/etc/bao:ro
+      - ./stack/openbao/agent-cube:/templates:ro
+      - ./.secrets/approle/cube:/approle:ro
+      - cube-secrets:/rendered
+
+  # ------------------------------------------------------------------ query engine
+  trino:
+    image: trinodb/trino:483
+    ports: ["28080:8080"]            # UI: http://localhost:28080/ui (user: admin)
+    volumes:
+      - ./stack/trino/etc/config.properties:/etc/trino/config.properties:ro
+      - ./stack/trino/etc/node.properties:/etc/trino/node.properties:ro
+      - ./stack/trino/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ./stack/trino/etc/access-control.properties:/etc/trino/access-control.properties:ro
+      - ./stack/trino/etc/rules.json:/etc/trino/rules.json:ro
+      - trino-catalog:/etc/trino/catalog:ro
+    networks: [default, lakehouse]
+    depends_on:
+      bao-agent-trino: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/v1/info | grep -q '\"starting\":false'"]
+      interval: 5s
+      retries: 40
+    mem_limit: 1600m
+
+  # ------------------------------------------------------------------ semantic layer
+  cubestore:
+    # Cube Store publishes per-arch tags: v1.7.50 (amd64), v1.7.50-arm64v8 (Apple silicon).
+    image: cubejs/cubestore:${CUBESTORE_TAG:-v1.7.50-arm64v8}
+    environment:
+      CUBESTORE_REMOTE_DIR: /cube/data
+      CUBESTORE_LOG_LEVEL: warn
+    volumes: [cubestore-data:/cube/data]
+    mem_limit: 768m
+
+  cube:
+    image: cubejs/cube:v1.7.50
+    # Load the secrets Bao Agent rendered, then start Cube as usual.
+    entrypoint: ["sh", "-c", ". /secrets/cube.env && exec docker-entrypoint.sh cubejs server"]
+    ports:
+      - "24000:4000"                 # REST API: /cubejs-api/v1/{meta,load}
+      - "25432:15432"                # SQL API (Postgres wire protocol) for BI tools
+    environment:
+      CUBEJS_DEV_MODE: "false"
+      CUBEJS_DB_TYPE: trino
+      CUBEJS_DB_HOST: trino
+      CUBEJS_DB_PORT: "8080"
+      CUBEJS_DB_PRESTO_CATALOG: lake
+      CUBEJS_DB_NAME: ec2
+      CUBEJS_DB_USER: cube
+      CUBEJS_CUBESTORE_HOST: cubestore
+      # Every API request must carry a JWT signed by OpenBao's identity key.
+      CUBEJS_JWK_URL: http://openbao:8200/v1/identity/oidc/.well-known/keys
+      CUBEJS_JWT_ALGS: RS256
+      CUBEJS_PG_SQL_PORT: "15432"
+      CUBEJS_SQL_USER: bi
+      # This one container serves the API *and* builds pre-aggregations in the background.
+      # In production you run API instances with this off and separate refresh-worker
+      # containers with it on, so rollup builds never compete with user queries.
+      CUBEJS_REFRESH_WORKER: "true"
+      CUBEJS_TELEMETRY: "false"
+      CUBEJS_LOG_LEVEL: info
+    volumes:
+      - ./stack/cube/cube.py:/cube/conf/cube.py:ro
+      - ./stack/cube/model:/cube/conf/model:ro
+      - cube-secrets:/secrets:ro
+    depends_on:
+      bao-agent-cube: { condition: service_healthy }
+      trino: { condition: service_healthy }
+      cubestore: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/readyz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 5s
+      retries: 40
+    mem_limit: 1g
+
+  # ------------------------------------------------------------------ audit store
+  audit-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_PASSWORD: local-superuser-not-used-by-apps
+    ports: ["25433:5432"]
+    volumes:
+      - ./stack/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - audit-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
+      interval: 3s
+      retries: 30
+    mem_limit: 256m
+
+networks:
+  lakehouse:
+    name: ec2-lakehouse_default      # the sibling's network: Lakekeeper + SeaweedFS
+    external: true
+
+volumes:
+  bao-data:
+  bao-logs:
+  trino-catalog:
+  cube-secrets:
+  cubestore-data:
+  audit-data:

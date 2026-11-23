@@ -1,0 +1,64 @@
+# mise pins the toolchain and is this project's task runner: `mise tasks` lists everything.
+[tools]
+python = "3.13.16"
+uv = "0.12.22"
+"github:openbao/openbao" = "2.7.1"     # the `bao` CLI, used by the hands-on labs
+
+[env]
+# Nothing secret lives here. Secrets are in OpenBao; .env only holds the one-time hand-over values.
+_.python.venv = { path = ".venv", create = true }
+UV_PYTHON = "3.13.16"
+BAO_ADDR = "http://localhost:28200"
+
+[tasks.setup]
+description = "Install Python dependencies from uv.lock"
+run = "uv sync --locked"
+
+[tasks.lake-keys]
+description = "Copy the lakehouse's S3 keys from learn-ai-agent's OpenBao into ./.env (re-run after the lakehouse is reset)"
+run = '''
+set -euo pipefail
+t=$(cat ../learn-ai-agent/.bao/dev-token)
+json=$(curl -sf -H "X-Vault-Token: $t" http://localhost:8200/v1/secret/data/ec2-lakehouse/s3)
+touch .env && chmod 600 .env
+grep -v '^LAKE_S3_' .env > .env.tmp || true
+printf 'LAKE_S3_ACCESS_KEY=%s\nLAKE_S3_SECRET_KEY=%s\n' \
+  "$(jq -r .data.data.access_key <<<"$json")" "$(jq -r .data.data.secret_key <<<"$json")" >> .env.tmp
+mv .env.tmp .env && chmod 600 .env
+echo "LAKE_S3_* written to .env (values not shown)"
+'''
+
+[tasks.up]
+description = "Start the lab (and the learn-ai-agent lakehouse if it isn't running); waits until healthy"
+run = "scripts/up.sh"
+
+[tasks.down]
+description = "Stop this lab, keeping its data (OpenBao comes back sealed; `mise run up` unseals it)"
+run = "scripts/down.sh"
+
+[tasks.unseal]
+description = "Unseal OpenBao after a restart (re-runs the idempotent bootstrap)"
+run = "docker compose run --rm bao-bootstrap 2>&1 | grep bao-bootstrap"
+
+[tasks.reset]
+description = "DELETE this lab's data, OpenBao (keys, tokens) and eval results. ./.env and ../learn-ai-agent are untouched"
+run = ["docker compose down -v --remove-orphans", "rm -rf .secrets evals/results"]
+
+[tasks.test]
+run = "uv run pytest -q"
+
+[tasks.ask]
+description = "Ask the agent one question: mise run ask -- [--mode semantic|sql|hybrid] [--persona agent-admin|agent-data] \"question\""
+run = "uv run python -m app.ask"
+
+[tasks.evals]
+description = "Run the golden-question evals (calls Claude: about 40 cents for all 3 modes)"
+run = "uv run python -m evals.run"
+
+[tasks."lab:tool"]
+description = "Call one agent tool by hand, without the model (lab/tool.py; Labs 06-07)"
+run = "uv run python -m lab.tool"
+
+[tasks."lab:mcp"]
+description = "Talk to the semantic layer's MCP server like an MCP client would (lab/mcp_call.py; Lab 09)"
+run = "uv run python -m lab.mcp_call"

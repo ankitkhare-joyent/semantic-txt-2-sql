@@ -1,0 +1,20 @@
+{
+  "catalogs": [
+    { "user": "admin|cube|agent-platform-admin|agent-data-team", "catalog": "lake", "allow": "read-only" },
+    { "user": "admin", "catalog": "system", "allow": "read-only" },
+    { "catalog": ".*", "allow": "none" }
+  ],
+  "schemas": [
+    { "user": "admin|cube|agent-platform-admin|agent-data-team", "catalog": "lake", "schema": "ec2|ref", "owner": false }
+  ],
+  "tables": [
+    {
+      "user": "agent-data-team",
+      "catalog": "lake", "schema": "ec2", "table": "instances",
+      "privileges": ["SELECT"],
+      "filter": "team = 'data'"
+    },
+    { "user": "admin|cube|agent-platform-admin", "catalog": "lake", "schema": "ec2|ref", "privileges": ["SELECT"] },
+    { "user": "agent-data-team", "catalog": "lake", "schema": "ref", "privileges": ["SELECT"] }
+  ]
+}

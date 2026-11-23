@@ -1,0 +1,13 @@
+# Secrets never go in git. OpenBao holds them; these are the local bootstrap leftovers.
+.env
+.secrets/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Eval output (re-generated on every run)
+evals/results/
